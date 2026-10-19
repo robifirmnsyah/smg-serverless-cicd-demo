@@ -40,7 +40,7 @@ jobs:
           echo "Deploying commit: ${SHORT_SHA} to Cloud Run..."
           
           gcloud builds submit --config=cloudbuild.yaml \
-            --substitutions=_APP_VERSION="git-${SHORT_SHA}",_RELEASE_CHANNEL="GitOps CI/CD",_TAG="${SHORT_SHA}",_REVISION_TAG="git-${SHORT_SHA}",_ACCENT_COLOR="blue",_ENABLE_CANARY="false" \
+            --substitutions=_APP_VERSION="git-${SHORT_SHA}",_RELEASE_CHANNEL="GitOps Auto-Deploy",_TAG="${SHORT_SHA}",_REVISION_TAG="canary",_ACCENT_COLOR="emerald",_ENABLE_CANARY="true" \
             --project=${{ env.PROJECT_ID }}
 
       - name: Output Deployment Summary
