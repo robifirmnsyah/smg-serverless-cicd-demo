@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cloud Run Serverless Modernization &amp; Canary Showcase</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+        }
+      }
+    };
+  </script>
+  <style>
+    body {
+      background-color: #090d16;
+      background-image:
+        radial-gradient(at 15% 10%, rgba(56, 189, 248, 0.10) 0px, transparent 45%),
+        radial-gradient(at 85% 15%, rgba(168, 85, 247, 0.10) 0px, transparent 45%),
+        radial-gradient(at 50% 90%, rgba(16, 185, 129, 0.06) 0px, transparent 50%);
+    }
+    .glass-card {
+      background: rgba(17, 24, 39, 0.78);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+  </style>
+</head>
+<body class="min-h-screen text-slate-100 font-sans antialiased selection:bg-sky-500 selection:text-white">
+
+  <!-- Dynamic Canary Release / Channel Banner -->
+  <div id="release-banner" class=" transition-all duration-300 border-b {% if is_canary %}bg-gradient-to-r from-violet-950/90 via-fuchsia-900/80 to-amber-950/90 border-fuchsia-500/40{% else %}bg-gradient-to-r from-slate-900 via-sky-950/80 to-slate-900 border-sky-500/30{% endif %}">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs sm:text-sm">
+      <div class="flex items-center gap-3">
+        <span id="banner-pill" class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-semibold tracking-wide uppercase text-[11px] {% if is_canary %}bg-amber-400/20 text-amber-300 border border-amber-400/40{% else %}bg-emerald-400/15 text-emerald-300 border border-emerald-400/30{% endif %}">
+          <span class="w-2 h-2 rounded-full animate-pulse {% if is_canary %}bg-amber-400{% else %}bg-emerald-400{% endif %}"></span>
+          <span id="banner-channel-label">{{ initial_data.release.badge }}</span>
+        </span>
+        <p id="banner-message" class="text-slate-200 font-medium">
+          {% if is_canary %}
+            Canary Release <span class="font-mono text-amber-300 font-semibold">v2 ({{ initial_data.release.codename }})</span> is serving live traffic via Cloud Run revision splitting!
+          {% else %}
+            Serving <span class="font-mono text-sky-300 font-semibold">v1 ({{ initial_data.release.codename }})</span> baseline production revision. Ready for progressive Canary traffic splitting.
+          {% endif %}
+        </p>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-slate-400 hidden md:inline">Codename:</span>
+        <code id="banner-codename" class="px-2 py-0.5 rounded bg-slate-950/70 text-slate-200 font-mono text-xs border border-slate-700/70">{{ initial_data.release.codename }}</code>
+        <button onclick="togglePreviewCanaryBanner()" class="text-xs px-2.5 py-1 rounded-md bg-white/10 hover:bg-white/20 text-slate-200 transition border border-white/10" title="Preview v1 Stable vs v2 Canary UI theme">
+          Switch v1/v2 Preview
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Container -->
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+
+    <!-- Header Section -->
+    <header class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 pb-2 border-b border-slate-800/80">
+      <div class="space-y-2">
+        <div class="flex flex-wrap items-center gap-2.5">
+          <span class="px-2.5 py-1 rounded-md bg-sky-500/10 border border-sky-500/30 text-sky-400 font-mono text-xs font-semibold">
+            GOOGLE CLOUD RUN
+          </span>
+          <span class="px-2.5 py-1 rounded-md bg-violet-500/10 border border-violet-500/30 text-violet-300 font-mono text-xs">
+            AUTO-SCALING 0 &rarr; 10
+          </span>
+          <span class="px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-300 font-mono text-xs">
+            CANARY SPLIT v1 / v2
+          </span>
+        </div>
+        <h1 class="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight text-white">
+          Serverless Modernization &amp; Canary Control Plane
+        </h1>
+        <p class="text-slate-400 text-sm sm:text-base max-w-3xl">
+          Real-time container telemetry, scale-to-zero cold-start detection, and live Canary traffic distribution analyzer powered by FastAPI on Cloud Run.
+        </p>
+      </div>
+
+      <!-- Quick Action Buttons -->
+      <div class="flex flex-wrap items-center gap-3">
+        <button onclick="fetchSingleInfo(false)" class="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 active:bg-sky-700 text-white font-semibold text-sm shadow-lg shadow-sky-600/20 transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          Ping <code class="font-mono text-xs bg-black/20 px-1.5 py-0.5 rounded">/api/info</code>
+        </button>
+        <button onclick="fetchSingleInfo(true)" class="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 font-semibold text-sm transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          Simulate Cold Start
+        </button>
+        <button onclick="checkHealthEndpoint()" class="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-medium text-sm transition">
+          <span id="health-dot" class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+          <code class="font-mono text-xs">/api/health</code>
+        </button>
+      </div>
+    </header>
+
+    <!-- Top 4 Telemetry Cards -->
+    <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+      <!-- Card 1: Active Version & Revision -->
+      <div class="glass-card rounded-2xl p-5 relative overflow-hidden">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Active Revision</span>
+          <span id="card-version-badge" class="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold {% if is_canary %}bg-amber-500/20 text-amber-300 border border-amber-500/40{% else %}bg-sky-500/20 text-sky-300 border border-sky-500/40{% endif %}">
+            {{ initial_data.version | upper }}
+          </span>
+        </div>
+        <div id="meta-revision" class="text-lg font-bold font-mono text-white truncate" title="{{ initial_data.revision }}">
+          {{ initial_data.revision }}
+        </div>
+        <div class="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
+          <span>Service: <strong id="meta-service" class="text-slate-200 font-mono">{{ initial_data.service }}</strong></span>
+          <span id="meta-channel" class="uppercase font-semibold {% if is_canary %}text-amber-400{% else %}text-emerald-400{% endif %}">{{ initial_data.release.channel }}</span>
+        </div>
+      </div>
+
+      <!-- Card 2: Container Instance Metadata -->
+      <div class="glass-card rounded-2xl p-5">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Container Instance</span>
+          <span id="meta-region" class="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-xs border border-slate-700">
+            {{ initial_data.instance.region }}
+          </span>
+        </div>
+        <div class="flex items-baseline gap-2">
+          <span id="meta-instance-id" class="text-lg font-bold font-mono text-emerald-400 truncate">
+            {{ initial_data.instance.id }}
+          </span>
+        </div>
+        <div class="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
+          <span>Instance Hits: <strong id="meta-req-count" class="text-white font-mono">{{ initial_data.instance.request_count }}</strong></span>
+          <span>Uptime: <strong id="meta-uptime" class="text-slate-200 font-mono">{{ initial_data.instance.uptime_seconds }}s</strong></span>
+        </div>
+      </div>
+
+      <!-- Card 3: Cold-Start Indicator -->
+      <div id="cold-start-card" class="glass-card rounded-2xl p-5 transition-all duration-300 {% if initial_data.cold_start.detected %}ring-1 ring-amber-500/50{% endif %}">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Cold-Start Telemetry</span>
+          <span id="cold-start-pill" class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-bold {% if initial_data.cold_start.detected %}bg-amber-500/20 text-amber-300 border border-amber-500/40{% else %}bg-emerald-500/20 text-emerald-300 border border-emerald-500/40{% endif %}">
+            <span id="cold-start-dot" class="w-2 h-2 rounded-full {% if initial_data.cold_start.detected %}bg-amber-400 animate-ping{% else %}bg-emerald-400{% endif %}"></span>
+            <span id="cold-start-state">{{ initial_data.cold_start.state }}</span>
+          </span>
+        </div>
+        <div class="flex items-baseline gap-2">
+          <span id="meta-latency" class="text-2xl font-extrabold font-mono text-white">
+            {{ initial_data.cold_start.response_time_ms }} ms
+          </span>
+          <span id="meta-init-overhead" class="text-xs font-mono text-amber-400">
+            {% if initial_data.cold_start.detected %}(+{{ initial_data.cold_start.init_overhead_ms }}ms init){% else %}(warm container){% endif %}
+          </span>
+        </div>
+        <div class="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
+          <span>Cold Starts Seen: <strong id="stat-cold-starts" class="text-amber-300 font-mono">1</strong></span>
+          <span>Boot: <strong class="text-slate-300 font-mono">{{ initial_data.instance.boot_time_utc[11:19] }} UTC</strong></span>
+        </div>
+      </div>
+
+      <!-- Card 4: Auto-Scaling (0-10) Gauge -->
+      <div class="glass-card rounded-2xl p-5">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Auto-Scaling (0&ndash;10)</span>
+          <span class="px-2 py-0.5 rounded bg-violet-500/15 text-violet-300 border border-violet-500/30 font-mono text-xs">
+            Scale-to-Zero
+          </span>
+        </div>
+        <div class="flex items-baseline justify-between">
+          <div>
+            <span id="active-instances-count" class="text-2xl font-extrabold font-mono text-violet-400">1</span>
+            <span class="text-xs text-slate-400 font-mono">/ {{ initial_data.autoscaling.max_instances }} max</span>
+          </div>
+          <span class="text-xs text-slate-400">Min: <strong class="text-slate-200 font-mono">{{ initial_data.autoscaling.min_instances }}</strong></span>
+        </div>
+        <!-- 10-slot visual instance bar -->
+        <div id="scaling-slots" class="mt-3 pt-3 border-t border-slate-800/80 grid grid-cols-10 gap-1" title="10 Cloud Run Auto-Scaling Instance Slots">
+          <div class="h-2.5 rounded-sm bg-violet-500 shadow-sm shadow-violet-500/50"></div>
+          <div class="h-2.5 rounded-sm bg-slate-800"></div>
+          <div class="h-2.5 rounded-sm bg-slate-800"></div>
+          <div class="h-2.5 rounded-sm bg-slate-800"></div>
+          <div class="h-2.5 rounded-sm bg-slate-800"></div>
+          <div class="h-2.5 rounded-sm bg-slate-800"></div>
+          <div class="h-2.5 rounded-sm bg-slate-800"></div>
+          <div class="h-2.5 rounded-sm bg-slate-800"></div>
+          <div class="h-2.5 rounded-sm bg-slate-800"></div>
+          <div class="h-2.5 rounded-sm bg-slate-800"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Interactive Canary Traffic Splitter & Auto-Scaling Load Tester -->
+    <section class="glass-card rounded-2xl p-6 space-y-6">
+      <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-slate-800 pb-5">
+        <div>
+          <h2 class="text-lg sm:text-xl font-bold text-white flex items-center gap-2.5">
+            <span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span>
+            Canary Traffic Distribution &amp; Auto-Scaling Load Tester
+          </h2>
+          <p class="text-xs sm:text-sm text-slate-400 mt-1">
+            Dispatch concurrent requests to <code class="font-mono text-sky-400">/api/info</code> to verify Cloud Run revision traffic splitting (<code class="font-mono">v1</code> vs <code class="font-mono">v2</code>) and container instance scaling.
+          </p>
+        </div>
+
+        <!-- Controls -->
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="flex items-center gap-2 bg-slate-900/90 border border-slate-700/80 rounded-xl px-3 py-1.5">
+            <label for="req-count-select" class="text-xs text-slate-400 font-medium">Requests:</label>
+            <select id="req-count-select" class="bg-transparent text-xs font-mono font-semibold text-white focus:outline-none">
+              <option value="20" class="bg-slate-900">20 reqs</option>
+              <option value="40" class="bg-slate-900" selected>40 reqs</option>
+              <option value="80" class="bg-slate-900">80 reqs</option>
+            </select>
+          </div>
+
+          <div class="flex items-center gap-2 bg-slate-900/90 border border-slate-700/80 rounded-xl px-3 py-1.5">
+            <label for="concurrency-select" class="text-xs text-slate-400 font-medium">Concurrency:</label>
+            <select id="concurrency-select" class="bg-transparent text-xs font-mono font-semibold text-white focus:outline-none">
+              <option value="1" class="bg-slate-900">1 (Sequential)</option>
+              <option value="5" class="bg-slate-900" selected>5 (Parallel)</option>
+              <option value="12" class="bg-slate-900">12 (Scale Burst)</option>
+            </select>
+          </div>
+
+          <div class="flex items-center gap-2 bg-slate-900/90 border border-slate-700/80 rounded-xl px-3 py-1.5">
+            <label for="latency-select" class="text-xs text-slate-400 font-medium">Work Delay:</label>
+            <select id="latency-select" class="bg-transparent text-xs font-mono font-semibold text-white focus:outline-none">
+              <option value="0" class="bg-slate-900" selected>0 ms (Fast)</option>
+              <option value="40" class="bg-slate-900">40 ms (Moderate)</option>
+              <option value="150" class="bg-slate-900">150 ms (Force Scale)</option>
+            </select>
+          </div>
+
+          <div class="flex items-center gap-2 bg-slate-900/90 border border-slate-700/80 rounded-xl px-3 py-1.5" title="Use 'Live /api/info' on Cloud Run with traffic splitting, or 'Demo 80/20 Canary' when testing a single local container">
+            <label for="test-mode-select" class="text-xs text-slate-400 font-medium">Mode:</label>
+            <select id="test-mode-select" class="bg-transparent text-xs font-mono font-semibold text-sky-300 focus:outline-none">
+              <option value="live" class="bg-slate-900" selected>Live /api/info</option>
+              <option value="canary8020" class="bg-slate-900">Sim 80/20 Canary</option>
+              <option value="canary5050" class="bg-slate-900">Sim 50/50 Canary</option>
+            </select>
+          </div>
+
+          <button id="run-test-btn" onclick="runTrafficTest()" class="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white font-semibold text-xs sm:text-sm shadow-lg shadow-sky-500/20 transition">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M4.5 3.5v13l11-6.5-11-6.5z"/></svg>
+            <span id="run-test-btn-label">Run Traffic Burst</span>
+          </button>
+
+          <button onclick="resetTelemetry()" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium border border-slate-700 transition">
+            Reset
+          </button>
+        </div>
+      </div>
+
+      <!-- Live Split Ratio Progress Bar -->
+      <div class="space-y-2">
+        <div class="flex items-center justify-between text-xs font-mono">
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 rounded-sm bg-sky-500 inline-block"></span>
+            <span class="text-sky-300 font-semibold">v1 STABLE:</span>
+            <span id="v1-count-label" class="text-white font-bold">0 reqs (0%)</span>
+          </div>
+          <div id="test-progress-status" class="text-slate-400">
+            Ready to test traffic distribution
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-amber-300 font-semibold">v2 CANARY:</span>
+            <span id="v2-count-label" class="text-white font-bold">0 reqs (0%)</span>
+            <span class="w-3 h-3 rounded-sm bg-amber-500 inline-block"></span>
+          </div>
+        </div>
+        <div class="w-full h-3.5 rounded-full bg-slate-800 overflow-hidden flex p-0.5 border border-slate-700/70">
+          <div id="split-bar-v1" class="h-full bg-sky-500 transition-all duration-300 rounded-l-full" style="width: 100%"></div>
+          <div id="split-bar-v2" class="h-full bg-amber-500 transition-all duration-300 rounded-r-full" style="width: 0%"></div>
+        </div>
+      </div>
+
+      <!-- Charts Grid -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 pt-2">
+        <!-- Doughnut Chart: v1 vs v2 Traffic Split -->
+        <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-4 flex flex-col justify-between">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400">Canary Traffic Split (v1 vs v2)</h3>
+            <span id="total-sampled-badge" class="text-xs font-mono text-slate-400">0 total</span>
+          </div>
+          <div class="relative h-56 flex items-center justify-center">
+            <canvas id="trafficSplitChart"></canvas>
+          </div>
+          <div class="mt-3 pt-3 border-t border-slate-800/80 grid grid-cols-2 gap-2 text-center text-xs">
+            <div class="bg-slate-950/60 rounded-lg p-2 border border-sky-500/20">
+              <div class="text-slate-400">v1 Stable Share</div>
+              <div id="v1-pct-big" class="text-lg font-bold font-mono text-sky-400">100%</div>
+            </div>
+            <div class="bg-slate-950/60 rounded-lg p-2 border border-amber-500/20">
+              <div class="text-slate-400">v2 Canary Share</div>
+              <div id="v2-pct-big" class="text-lg font-bold font-mono text-amber-400">0%</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bar/Line Chart: Response Latency & Cold Start Spikes -->
+        <div class="lg:col-span-2 bg-slate-900/60 border border-slate-800 rounded-xl p-4 flex flex-col justify-between">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400">
+              Request Latency &amp; Cold-Start Indicator Timeline (ms)
+            </h3>
+            <div class="flex items-center gap-3 text-[11px] font-mono">
+              <span class="inline-flex items-center gap-1 text-sky-300"><span class="w-2.5 h-2.5 rounded-sm bg-sky-500"></span>Warm v1</span>
+              <span class="inline-flex items-center gap-1 text-amber-300"><span class="w-2.5 h-2.5 rounded-sm bg-amber-500"></span>Warm v2 (Canary)</span>
+              <span class="inline-flex items-center gap-1 text-rose-400"><span class="w-2.5 h-2.5 rounded-sm bg-rose-500"></span>Cold Start</span>
+            </div>
+          </div>
+          <div class="relative h-64">
+            <canvas id="latencyTimelineChart"></canvas>
+          </div>
+          <div class="mt-3 pt-3 border-t border-slate-800/80 grid grid-cols-3 gap-3 text-xs font-mono">
+            <div>
+              <span class="text-slate-400">Avg Latency:</span>
+              <strong id="stat-avg-latency" class="text-white ml-1">-- ms</strong>
+            </div>
+            <div>
+              <span class="text-slate-400">Max / Cold Spike:</span>
+              <strong id="stat-max-latency" class="text-rose-400 ml-1">-- ms</strong>
+            </div>
+            <div>
+              <span class="text-slate-400">Unique Instances:</span>
+              <strong id="stat-unique-instances" class="text-violet-300 ml-1">1</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Bottom Grid: Discovered Instances & Live Telemetry Log -->
+    <section class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <!-- Discovered Cloud Run Instances & Metadata -->
+      <div class="glass-card rounded-2xl p-5 space-y-4">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div>
+            <h3 class="text-sm font-bold text-white uppercase tracking-wider">Discovered Container Instances</h3>
+            <p class="text-xs text-slate-400 mt-0.5">Instances scaled between 0 and 10</p>
+          </div>
+          <span id="instance-pool-badge" class="px-2.5 py-1 rounded-full bg-violet-500/15 text-violet-300 border border-violet-500/30 font-mono text-xs font-semibold">
+            1 Active
+          </span>
+        </div>
+
+        <div id="instance-list" class="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+          <!-- Populated dynamically by JS -->
+        </div>
+
+        <div class="pt-3 border-t border-slate-800/80 space-y-2 text-xs">
+          <div class="text-slate-400 font-semibold uppercase tracking-wider">Container Environment Specs</div>
+          <div class="grid grid-cols-2 gap-2 font-mono">
+            <div class="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+              <div class="text-slate-400 text-[11px]">CPU / Memory</div>
+              <div class="text-slate-200 font-semibold mt-0.5">{{ initial_data.autoscaling.cpu_limit }} / {{ initial_data.autoscaling.memory_limit }}</div>
+            </div>
+            <div class="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+              <div class="text-slate-400 text-[11px]">Max Concurrency</div>
+              <div class="text-slate-200 font-semibold mt-0.5">{{ initial_data.autoscaling.concurrency_limit }} req/inst</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recent Requests & Raw JSON Inspector -->
+      <div class="lg:col-span-2 glass-card rounded-2xl p-5 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+          <div>
+            <h3 class="text-sm font-bold text-white uppercase tracking-wider">Live Request Stream &amp; Metadata Inspector</h3>
+            <p class="text-xs text-slate-400 mt-0.5">Real-time responses from <code class="font-mono text-sky-400">/api/info</code> and <code class="font-mono text-emerald-400">/api/health</code></p>
+          </div>
+          <button onclick="toggleRawJson()" class="text-xs font-mono px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 transition">
+            Toggle Raw JSON
+          </button>
+        </div>
+
+        <!-- Raw JSON Drawer (hidden by default) -->
+        <pre id="raw-json-panel" class="hidden bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs font-mono text-emerald-300 overflow-x-auto max-h-52"></pre>
+
+        <!-- Table of recent requests -->
+        <div class="overflow-x-auto max-h-64 overflow-y-auto">
+          <table class="w-full text-left border-collapse text-xs font-mono">
+            <thead>
+              <tr class="border-b border-slate-800 text-slate-400 uppercase text-[11px]">
+                <th class="py-2 px-2.5">#</th>
+                <th class="py-2 px-2.5">Version</th>
+                <th class="py-2 px-2.5">Revision</th>
+                <th class="py-2 px-2.5">Instance ID</th>
+                <th class="py-2 px-2.5">Container State</th>
+                <th class="py-2 px-2.5 text-right">Latency</th>
+              </tr>
+            </thead>
+            <tbody id="request-log-tbody" class="divide-y divide-slate-800/60">
+              <!-- Populated dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Initial Server Payload Injected Safely -->
+  <script id="initial-payload-data" type="application/json">
+    {{ initial_data | tojson }}
+  </script>
+
+  <script>
+    const initialData = JSON.parse(document.getElementById('initial-payload-data').textContent);
+
+    // Telemetry state
+    let requestCounter = 0;
+    let v1Count = 0;
+    let v2Count = 0;
+    let coldStartCount = 0;
+    let latencies = [];
+    const discoveredInstances = new Map();
+    let previewCanaryOverride = initialData.is_canary;
+
+    // Initialize Charts
+    const splitCtx = document.getElementById('trafficSplitChart').getContext('2d');
+    const trafficSplitChart = new Chart(splitCtx, {
+      type: 'doughnut',
+      data: {
+        labels: ['v1 Stable', 'v2 Canary'],
+        datasets: [{
+          data: [1, 0],
+          backgroundColor: ['rgba(14, 165, 233, 0.85)', 'rgba(245, 158, 11, 0.88)'],
+          borderColor: ['#0284c7', '#d97706'],
+          borderWidth: 2,
+          hoverOffset: 6
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '68%',
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { color: '#cbd5e1', font: { family: 'JetBrains Mono', size: 11 } }
+          }
+        }
+      }
+    });
+
+    const latencyCtx = document.getElementById('latencyTimelineChart').getContext('2d');
+    const latencyTimelineChart = new Chart(latencyCtx, {
+      type: 'bar',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'Response Time (ms)',
+          data: [],
+          backgroundColor: [],
+          borderRadius: 4,
+          maxBarThickness: 18
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: {
+            ticks: { color: '#64748b', font: { family: 'JetBrains Mono', size: 10 }, maxTicksLimit: 20 },
+            grid: { display: false }
+          },
+          y: {
+            beginAtZero: true,
+            ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 10 } },
+            grid: { color: 'rgba(148, 163, 184, 0.1)' }
+          }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function(ctx) {
+                return ` ${ctx.parsed.y} ms`;
+              }
+            }
+          }
+        }
+      }
+    });
+
+    function applyBannerTheme(isCanary, releaseObj, versionStr) {
+      const banner = document.getElementById('release-banner');
+      const pill = document.getElementById('banner-pill');
+      const label = document.getElementById('banner-channel-label');
+      const msg = document.getElementById('banner-message');
+      const code = document.getElementById('banner-codename');
+
+      if (isCanary) {
+        banner.className = 'transition-all duration-300 border-b bg-gradient-to-r from-violet-950/90 via-fuchsia-900/80 to-amber-950/90 border-fuchsia-500/40';
+        pill.className = 'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-semibold tracking-wide uppercase text-[11px] bg-amber-400/20 text-amber-300 border border-amber-400/40';
+        label.textContent = releaseObj?.badge || 'v2.0 Canary Release';
+        code.textContent = releaseObj?.codename || 'Aurora Edge';
+        msg.innerHTML = `Canary Release <span class="font-mono text-amber-300 font-semibold">${versionStr} (${code.textContent})</span> is receiving live traffic via Cloud Run revision splitting!`;
+      } else {
+        banner.className = 'transition-all duration-300 border-b bg-gradient-to-r from-slate-900 via-sky-950/80 to-slate-900 border-sky-500/30';
+        pill.className = 'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-semibold tracking-wide uppercase text-[11px] bg-emerald-400/15 text-emerald-300 border border-emerald-400/30';
+        label.textContent = releaseObj?.badge || 'v1.0 Production Stable';
+        code.textContent = releaseObj?.codename || 'Bedrock Core';
+        msg.innerHTML = `Serving <span class="font-mono text-sky-300 font-semibold">${versionStr} (${code.textContent})</span> baseline production revision. Ready for progressive Canary traffic splitting.`;
+      }
+    }
+
+    function togglePreviewCanaryBanner() {
+      previewCanaryOverride = !previewCanaryOverride;
+      if (previewCanaryOverride) {
+        applyBannerTheme(true, { badge: 'v2.0 Canary Release', codename: 'Aurora Edge' }, 'v2');
+      } else {
+        applyBannerTheme(false, { badge: 'v1.0 Production Stable', codename: 'Bedrock Core' }, 'v1');
+      }
+    }
+
+    function recordTelemetrySample(payload) {
+      requestCounter += 1;
+      const ver = (payload.version || 'v1').toLowerCase();
+      const isCanary = ver === 'v2' || payload.is_canary === true;
+      const isCold = Boolean(payload.cold_start?.detected);
+      const latencyMs = Number(payload.cold_start?.response_time_ms || 12.5);
+
+      if (isCanary) {
+        v2Count += 1;
+      } else {
+        v1Count += 1;
+      }
+
+      if (isCold) {
+        coldStartCount += 1;
+      }
+
+      latencies.push(latencyMs);
+
+      // Track discovered container instance
+      const instId = payload.instance?.id || 'inst-local';
+      const existing = discoveredInstances.get(instId) || {
+        id: instId,
+        version: ver,
+        revision: payload.revision,
+        hits: 0,
+        coldStarts: 0
+      };
+      existing.hits += 1;
+      existing.version = ver;
+      existing.revision = payload.revision;
+      if (isCold) existing.coldStarts += 1;
+      discoveredInstances.set(instId, existing);
+
+      // Update top cards
+      document.getElementById('meta-revision').textContent = payload.revision;
+      document.getElementById('meta-service').textContent = payload.service;
+      document.getElementById('meta-channel').textContent = payload.release?.channel || (isCanary ? 'canary' : 'stable');
+      document.getElementById('meta-channel').className = `uppercase font-semibold ${isCanary ? 'text-amber-400' : 'text-emerald-400'}`;
+
+      const verBadge = document.getElementById('card-version-badge');
+      verBadge.textContent = ver.toUpperCase();
+      verBadge.className = `px-2.5 py-0.5 rounded-full text-xs font-mono font-bold ${
+        isCanary
+          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+          : 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
+      }`;
+
+      document.getElementById('meta-instance-id').textContent = instId;
+      document.getElementById('meta-region').textContent = payload.instance?.region || 'asia-southeast2';
+      document.getElementById('meta-req-count').textContent = payload.instance?.request_count || requestCounter;
+      document.getElementById('meta-uptime').textContent = `${payload.instance?.uptime_seconds ?? 0}s`;
+
+      // Cold start card update
+      const coldPill = document.getElementById('cold-start-pill');
+      const coldDot = document.getElementById('cold-start-dot');
+      const coldState = document.getElementById('cold-start-state');
+      const initOverhead = document.getElementById('meta-init-overhead');
+      document.getElementById('meta-latency').textContent = `${latencyMs} ms`;
+      document.getElementById('stat-cold-starts').textContent = coldStartCount;
+
+      if (isCold) {
+        coldPill.className = 'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40';
+        coldDot.className = 'w-2 h-2 rounded-full bg-rose-400 animate-ping';
+        coldState.textContent = 'COLD_START';
+        initOverhead.textContent = `(+${payload.cold_start?.init_overhead_ms || 160}ms init)`;
+        initOverhead.className = 'text-xs font-mono text-rose-400';
+      } else {
+        coldPill.className = 'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40';
+        coldDot.className = 'w-2 h-2 rounded-full bg-emerald-400';
+        coldState.textContent = 'WARM';
+        initOverhead.textContent = '(warm container)';
+        initOverhead.className = 'text-xs font-mono text-emerald-400';
+      }
+
+      // Update Banner if Canary detected
+      applyBannerTheme(isCanary, payload.release, ver);
+
+      // Update Raw JSON Inspector
+      document.getElementById('raw-json-panel').textContent = JSON.stringify(payload, null, 2);
+
+      // Update Split Bar & Doughnut Chart
+      const total = v1Count + v2Count;
+      const v1Pct = total > 0 ? Math.round((v1Count / total) * 100) : 100;
+      const v2Pct = total > 0 ? 100 - v1Pct : 0;
+
+      document.getElementById('v1-count-label').textContent = `${v1Count} reqs (${v1Pct}%)`;
+      document.getElementById('v2-count-label').textContent = `${v2Count} reqs (${v2Pct}%)`;
+      document.getElementById('v1-pct-big').textContent = `${v1Pct}%`;
+      document.getElementById('v2-pct-big').textContent = `${v2Pct}%`;
+      document.getElementById('total-sampled-badge').textContent = `${total} sampled`;
+      document.getElementById('split-bar-v1').style.width = `${v1Pct}%`;
+      document.getElementById('split-bar-v2').style.width = `${v2Pct}%`;
+
+      trafficSplitChart.data.datasets[0].data = [v1Count, v2Count];
+      trafficSplitChart.update('none');
+
+      // Update Latency Chart (keep last 45 points for readability)
+      latencyTimelineChart.data.labels.push(`#${requestCounter}`);
+      latencyTimelineChart.data.datasets[0].data.push(latencyMs);
+      const barColor = isCold
+        ? 'rgba(244, 63, 94, 0.9)'
+        : (isCanary ? 'rgba(245, 158, 11, 0.85)' : 'rgba(14, 165, 233, 0.85)');
+      latencyTimelineChart.data.datasets[0].backgroundColor.push(barColor);
+
+      if (latencyTimelineChart.data.labels.length > 45) {
+        latencyTimelineChart.data.labels.shift();
+        latencyTimelineChart.data.datasets[0].data.shift();
+        latencyTimelineChart.data.datasets[0].backgroundColor.shift();
+      }
+      latencyTimelineChart.update('none');
+
+      // Update Latency Stats
+      const avgLat = (latencies.reduce((a, b) => a + b, 0) / latencies.length).toFixed(1);
+      const maxLat = Math.max(...latencies).toFixed(1);
+      document.getElementById('stat-avg-latency').textContent = `${avgLat} ms`;
+      document.getElementById('stat-max-latency').textContent = `${maxLat} ms`;
+
+      // Update Auto-Scaling Slots & Discovered Instances
+      renderDiscoveredInstances();
+
+      // Prepend row to Live Request Stream table
+      const tbody = document.getElementById('request-log-tbody');
+      const tr = document.createElement('tr');
+      tr.className = 'hover:bg-slate-800/40 transition';
+      tr.innerHTML = `
+        <td class="py-2 px-2.5 text-slate-400">#${requestCounter}</td>
+        <td class="py-2 px-2.5">
+          <span class="px-2 py-0.5 rounded text-[11px] font-bold ${
+            isCanary ? 'bg-amber-500/20 text-amber-300' : 'bg-sky-500/20 text-sky-300'
+          }">${ver.toUpperCase()}</span>
+        </td>
+        <td class="py-2 px-2.5 text-slate-300 truncate max-w-[160px]">${payload.revision}</td>
+        <td class="py-2 px-2.5 text-emerald-400">${instId}</td>
+        <td class="py-2 px-2.5">
+          ${
+            isCold
+              ? '<span class="text-rose-400 font-semibold">COLD START</span>'
+              : '<span class="text-emerald-400">WARM</span>'
+          }
+        </td>
+        <td class="py-2 px-2.5 text-right font-semibold text-white">${latencyMs} ms</td>
+      `;
+      tbody.prepend(tr);
+      while (tbody.children.length > 30) {
+        tbody.removeChild(tbody.lastChild);
+      }
+    }
+
+    function renderDiscoveredInstances() {
+      const count = Math.min(discoveredInstances.size, 10);
+      document.getElementById('active-instances-count').textContent = count;
+      document.getElementById('stat-unique-instances').textContent = discoveredInstances.size;
+      document.getElementById('instance-pool-badge').textContent = `${discoveredInstances.size} Active`;
+
+      // Update 10-slot visual indicator
+      const slotsContainer = document.getElementById('scaling-slots');
+      slotsContainer.innerHTML = '';
+      for (let i = 0; i < 10; i++) {
+        const div = document.createElement('div');
+        div.className = i < count
+          ? 'h-2.5 rounded-sm bg-violet-500 shadow-sm shadow-violet-500/50 transition-all'
+          : 'h-2.5 rounded-sm bg-slate-800 transition-all';
+        slotsContainer.appendChild(div);
+      }
+
+      // Render instance list cards
+      const listEl = document.getElementById('instance-list');
+      listEl.innerHTML = '';
+      Array.from(discoveredInstances.values()).forEach((inst) => {
+        const isCanary = inst.version === 'v2';
+        const item = document.createElement('div');
+        item.className = 'flex items-center justify-between p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs font-mono';
+        item.innerHTML = `
+          <div class="space-y-0.5">
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full ${isCanary ? 'bg-amber-400' : 'bg-emerald-400'}"></span>
+              <span class="font-bold text-white">${inst.id}</span>
+              <span class="px-1.5 py-0.2 rounded text-[10px] ${
+                isCanary ? 'bg-amber-500/20 text-amber-300' : 'bg-sky-500/20 text-sky-300'
+              }">${inst.version.toUpperCase()}</span>
+            </div>
+            <div class="text-[11px] text-slate-400 truncate max-w-[200px]">${inst.revision}</div>
+          </div>
+          <div class="text-right">
+            <div class="text-slate-200 font-semibold">${inst.hits} reqs</div>
+            <div class="text-[10px] ${inst.coldStarts > 0 ? 'text-rose-400' : 'text-slate-500'}">
+              ${inst.coldStarts} cold start${inst.coldStarts === 1 ? '' : 's'}
+            </div>
+          </div>
+        `;
+        listEl.appendChild(item);
+      });
+    }
+
+    async function fetchSingleInfo(forceCold = false) {
+      const url = `/api/info?force_cold_start=${forceCold}&_t=${Date.now()}`;
+      const resp = await fetch(url, { cache: 'no-store' });
+      const data = await resp.json();
+      recordTelemetrySample(data);
+    }
+
+    async function checkHealthEndpoint() {
+      const dot = document.getElementById('health-dot');
+      try {
+        const resp = await fetch(`/api/health?_t=${Date.now()}`, { cache: 'no-store' });
+        const data = await resp.json();
+        dot.className = data.status === 'healthy'
+          ? 'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse'
+          : 'w-2.5 h-2.5 rounded-full bg-rose-500';
+        const panel = document.getElementById('raw-json-panel');
+        panel.classList.remove('hidden');
+        panel.textContent = JSON.stringify(data, null, 2);
+      } catch (err) {
+        dot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500';
+      }
+    }
+
+    function toggleRawJson() {
+      const panel = document.getElementById('raw-json-panel');
+      panel.classList.toggle('hidden');
+    }
+
+    function resetTelemetry() {
+      requestCounter = 0;
+      v1Count = 0;
+      v2Count = 0;
+      coldStartCount = 0;
+      latencies = [];
+      discoveredInstances.clear();
+
+      latencyTimelineChart.data.labels = [];
+      latencyTimelineChart.data.datasets[0].data = [];
+      latencyTimelineChart.data.datasets[0].backgroundColor = [];
+      latencyTimelineChart.update();
+
+      document.getElementById('request-log-tbody').innerHTML = '';
+      document.getElementById('test-progress-status').textContent = 'Telemetry reset. Ready for traffic test.';
+      recordTelemetrySample(initialData);
+    }
+
+    async function runTrafficTest() {
+      const reqVal = document.getElementById('req-count-select')?.value;
+      const totalReqs = parseInt(reqVal, 10) || 40;
+      const concVal = document.getElementById('concurrency-select')?.value;
+      const concurrency = parseInt(concVal, 10) || 5;
+      const simVal = document.getElementById('latency-select')?.value;
+      const simulateMs = parseInt(simVal, 10) || 0;
+      const mode = document.getElementById('test-mode-select')?.value || 'live';
+
+      const btn = document.getElementById('run-test-btn');
+      const btnLabel = document.getElementById('run-test-btn-label');
+      const statusEl = document.getElementById('test-progress-status');
+
+      btn.disabled = true;
+      btn.classList.add('opacity-60', 'cursor-not-allowed');
+      let completed = 0;
+
+      const executeOne = async (idx) => {
+        const resp = await fetch(`/api/info?simulate_ms=${simulateMs}&_t=${Date.now()}-${idx}`, {
+          cache: 'no-store'
+        });
+        const data = await resp.json();
+
+        // If user selected simulated Canary split mode (helpful when demoing on a single local container)
+        if (mode === 'canary8020' || mode === 'canary5050') {
+          const canaryThreshold = mode === 'canary8020' ? 0.20 : 0.50;
+          const isSimCanary = Math.random() < canaryThreshold;
+          data.version = isSimCanary ? 'v2' : 'v1';
+          data.is_canary = isSimCanary;
+          data.revision = isSimCanary
+            ? `${data.service}-00002-v2`
+            : `${data.service}-00001-v1`;
+          data.release = isSimCanary
+            ? { channel: 'canary', badge: 'v2.0 Canary Release', codename: 'Aurora Edge' }
+            : { channel: 'stable', badge: 'v1.0 Production Stable', codename: 'Bedrock Core' };
+
+          // Simulate Cloud Run auto-scaling up container instances under burst concurrency
+          const scaledPoolSize = concurrency >= 12 ? 6 : (concurrency >= 5 ? 3 : 1);
+          const slot = (idx % scaledPoolSize) + 1;
+          data.instance.id = `cr-${data.version}-slot0${slot}`;
+          if (idx < scaledPoolSize && idx > 0) {
+            data.cold_start.detected = true;
+            data.cold_start.state = 'COLD_START';
+            data.cold_start.response_time_ms = Number((155 + Math.random() * 65).toFixed(1));
+          }
+        }
+
+        completed += 1;
+        statusEl.textContent = `Sending traffic burst: ${completed} / ${totalReqs} requests completed...`;
+        recordTelemetrySample(data);
+      };
+
+      try {
+        btnLabel.textContent = 'Running...';
+        const queue = Array.from({ length: totalReqs }, (_, i) => i);
+        const workers = Array.from({ length: Math.min(concurrency, totalReqs) }, async () => {
+          while (queue.length > 0) {
+            const idx = queue.shift();
+            if (idx !== undefined) {
+              await executeOne(idx);
+            }
+          }
+        });
+        await Promise.all(workers);
+        statusEl.textContent = `Completed ${totalReqs} requests (${concurrency}x concurrency).`;
+      } catch (err) {
+        statusEl.textContent = `Traffic test error: ${err.message}`;
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove('opacity-60', 'cursor-not-allowed');
+        btnLabel.textContent = 'Run Traffic Burst';
+      }
+    }
+
+    // Seed dashboard with initial container response
+    recordTelemetrySample(initialData);
+  </script>
+</body>
+</html>

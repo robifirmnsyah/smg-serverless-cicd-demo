@@ -1,0 +1,12 @@
+.gcloudignore
+.git
+.gitignore
+.terraform
+.terraform.lock.hcl
+terraform/.terraform
+terraform/.terraform.lock.hcl
+__pycache__
+*.pyc
+presentation/
+*.pptx
+*.png

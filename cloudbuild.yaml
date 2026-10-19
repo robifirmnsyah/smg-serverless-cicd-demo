@@ -1,0 +1,81 @@
+# ==============================================================================
+# Google Cloud Build — Serverless CI/CD Pipeline for Cloud Run
+# Project: dev-robifirmansyah
+# Service: smg-serverless-app (asia-southeast2)
+# ==============================================================================
+
+substitutions:
+  _APP_VERSION: 'v1.0.0'
+  _RELEASE_CHANNEL: 'Stable Production'
+  _TAG: 'v1.0.0'
+  _REGION: 'asia-southeast2'
+  _SERVICE_NAME: 'smg-serverless-app'
+  _IMAGE_URL: 'asia-southeast2-docker.pkg.dev/dev-robifirmansyah/smg-serverless-repo/smg-serverless-app'
+  _REVISION_TAG: 'stable'
+  _ACCENT_COLOR: 'blue'
+  _ENABLE_CANARY: 'false'
+
+steps:
+  # ----------------------------------------------------------------------------
+  # Step 1: Build container image with APP_VERSION build argument
+  # ----------------------------------------------------------------------------
+  - id: 'docker-build'
+    name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--build-arg'
+      - 'APP_VERSION=${_APP_VERSION}'
+      - '--tag'
+      - '${_IMAGE_URL}:${_TAG}'
+      - '--tag'
+      - '${_IMAGE_URL}:latest'
+      - './app'
+
+  # ----------------------------------------------------------------------------
+  # Step 2: Push container image tags to Google Artifact Registry
+  # ----------------------------------------------------------------------------
+  - id: 'docker-push'
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['docker-build']
+    args:
+      - 'push'
+      - '--all-tags'
+      - '${_IMAGE_URL}'
+
+  # ----------------------------------------------------------------------------
+  # Step 3: Deploy revision to Google Cloud Run
+  # ----------------------------------------------------------------------------
+  - id: 'cloud-run-deploy'
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    waitFor: ['docker-push']
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - '${_SERVICE_NAME}'
+      - '--image'
+      - '${_IMAGE_URL}:${_TAG}'
+      - '--region'
+      - '${_REGION}'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--min-instances'
+      - '0'
+      - '--max-instances'
+      - '10'
+      - '--service-account'
+      - 'smg-serverless-sa@dev-robifirmansyah.iam.gserviceaccount.com'
+      - '--port'
+      - '8080'
+      - '--tag'
+      - '${_REVISION_TAG}'
+      - '--set-env-vars'
+      - 'APP_VERSION=${_APP_VERSION},RELEASE_CHANNEL=${_RELEASE_CHANNEL},ACCENT_COLOR=${_ACCENT_COLOR},ENABLE_CANARY_FEATURES=${_ENABLE_CANARY}'
+
+images:
+  - '${_IMAGE_URL}:${_TAG}'
+  - '${_IMAGE_URL}:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
