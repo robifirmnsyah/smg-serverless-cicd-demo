@@ -1,0 +1,57 @@
+name: Cloud Run Serverless Automated CI/CD
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - 'cloudbuild.yaml'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: dev-robifirmansyah
+  REGION: asia-southeast2
+  SERVICE_NAME: smg-serverless-app
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy to Google Cloud Run
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code from Repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK (gcloud)
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Trigger Serverless Build via Cloud Build
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "Deploying commit: ${SHORT_SHA} to Cloud Run..."
+          
+          gcloud builds submit --config=cloudbuild.yaml \
+            --substitutions=_APP_VERSION="git-${SHORT_SHA}",_RELEASE_CHANNEL="GitOps CI/CD",_TAG="${SHORT_SHA}",_REVISION_TAG="git-${SHORT_SHA}",_ACCENT_COLOR="blue",_ENABLE_CANARY="false" \
+            --project=${{ env.PROJECT_ID }}
+
+      - name: Output Deployment Summary
+        run: |
+          SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --region=${{ env.REGION }} \
+            --project=${{ env.PROJECT_ID }} \
+            --format="value(status.url)")
+          
+          echo "============================================================"
+          echo "🚀 CLOUD RUN DEPLOYMENT SUCCESSFUL!"
+          echo "Service URL : ${SERVICE_URL}"
+          echo "Region      : ${{ env.REGION }}"
+          echo "============================================================"
